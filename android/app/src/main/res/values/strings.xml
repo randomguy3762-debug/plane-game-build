@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">3D Sky Master</string>
+    <string name="title_activity_main">3D Sky Master</string>
+    <string name="package_name">com.sky.plane</string>
+    <string name="custom_url_scheme">com.sky.plane</string>
+</resources>

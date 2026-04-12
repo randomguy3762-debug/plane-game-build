@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Pro Flight Sim - Fixed Ratio</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #000; font-family: 'Segoe UI', sans-serif; user-select: none; touch-action: none; }
+  
+  /* Fixed HUD - Moved to top center to avoid overlap */
+  #hud {
+    position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+    color: white; background: rgba(0,0,0,0.6); padding: 8px 20px; border-radius: 20px;
+    font-size: 14px; pointer-events: none; border: 1px solid rgba(255,255,255,0.2);
+    display: flex; gap: 15px; white-space: nowrap; z-index: 100;
+  }
+
+  #gearToggle {
+    position: fixed; top: 15px; left: 15px;
+    width: 90px; height: 45px; background: #222; color: white;
+    border: 2px solid #444; border-radius: 8px; font-weight: bold;
+    display: flex; align-items: center; justify-content: center; z-index: 101;
+    font-size: 12px;
+  }
+  .gear-down { border-color: #00ff00 !important; color: #00ff00 !important; box-shadow: 0 0 10px rgba(0,255,0,0.3); }
+
+  /* Thrust Slider - Right Side */
+  #thrustContainer {
+    position: fixed; bottom: 20px; right: 20px;
+    width: 70px; height: 220px; background: rgba(0,0,0,0.5);
+    border-radius: 15px; border: 2px solid #555;
+    display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 15px 0;
+  }
+  #thrustSlider {
+    appearance: none; width: 150px; height: 10px;
+    background: #333; transform: rotate(-90deg);
+    cursor: pointer; margin: 60px 0; outline: none; border-radius: 5px;
+  }
+  #thrustSlider::-webkit-slider-thumb {
+    appearance: none; width: 40px; height: 25px; background: #e63946;
+    border-radius: 5px; border: 2px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.5);
+  }
+
+  /* Movement Controls - Left Side */
+  .flight-controls { position: fixed; bottom: 20px; left: 20px; display: grid; grid-template-columns: repeat(3, 65px); grid-template-rows: repeat(3, 65px); gap: 10px; }
+  .btn {
+    width: 65px; height: 65px; background: rgba(255,255,255,0.1); 
+    color: white; border: 2px solid rgba(255,255,255,0.3); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-weight: bold;
+    backdrop-filter: blur(5px);
+  }
+  .active { background: rgba(230, 57, 70, 0.8) !important; border-color: #fff !important; transform: scale(0.95); }
+
+  #gameOver {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.9); display: none; flex-direction: column;
+    align-items: center; justify-content: center; z-index: 1000; color: white;
+  }
+  #restartBtn { margin-top: 20px; padding: 15px 40px; background: #e63946; color: white; border: none; border-radius: 30px; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<div id="gameOver">
+    <h1>PLANE CRASHED!</h1>
+    <p>Lower gear for landing.</p>
+    <button id="restartBtn">RESTART</button>
+</div>
+
+<div id="gearToggle" class="gear-down">GEAR: DN</div>
+
+<div id="hud">
+    <span>SPD: <b id="spd">0</b> kts</span>
+    <span>ALT: <b id="alt">0</b> ft</span>
+    <span>THR: <b id="thr">0</b>%</span>
+</div>
+
+<div class="flight-controls">
+  <div id="pitchUp" class="btn" style="grid-column: 2; grid-row: 1;">UP</div>
+  <div id="btnLeft" class="btn" style="grid-column: 1; grid-row: 2;">L</div>
+  <div id="btnRight" class="btn" style="grid-column: 3; grid-row: 2;">R</div>
+  <div id="pitchDown" class="btn" style="grid-column: 2; grid-row: 3;">DN</div>
+</div>
+
+<div id="thrustContainer">
+    <div style="color:white; font-size:10px; font-weight:bold;">MAX</div>
+    <input type="range" id="thrustSlider" min="0" max="100" value="0">
+    <div style="color:white; font-size:10px; font-weight:bold;">IDLE</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.158/build/three.min.js"></script>
+
+<script>
+/** * SCENE SETUP **/
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x6ebdf2);
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 10000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const light = new THREE.DirectionalLight(0xffffff, 1.5);
+light.position.set(100, 200, 100);
+scene.add(light);
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+
+// Environment
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(10000, 10000), new THREE.MeshStandardMaterial({color: 0x2d4a22}));
+ground.rotation.x = -Math.PI/2;
+scene.add(ground);
+
+// RUNWAY
+const runway = new THREE.Mesh(new THREE.PlaneGeometry(40, 1200), new THREE.MeshStandardMaterial({color: 0x111111}));
+runway.rotation.x = -Math.PI/2;
+runway.position.y = 0.01;
+scene.add(runway);
+
+// BUILDINGS
+for(let i=0; i<50; i++) {
+    const h = 20 + Math.random() * 80;
+    const b = new THREE.Mesh(new THREE.BoxGeometry(15, h, 15), new THREE.MeshStandardMaterial({color: 0x444455}));
+    b.position.set(Math.random() * 600 - 300, h/2, -1000 - (Math.random() * 1000));
+    scene.add(b);
+}
+
+/** * PLANE **/
+const planeGroup = new THREE.Group();
+const redMat = new THREE.MeshStandardMaterial({color: 0xcc0000});
+const blackMat = new THREE.MeshStandardMaterial({color: 0x111111});
+
+const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.2, 4.5, 8), redMat);
+fuse.rotation.x = Math.PI/2;
+planeGroup.add(fuse);
+
+const wings = new THREE.Mesh(new THREE.BoxGeometry(7, 0.1, 1.5), redMat);
+planeGroup.add(wings);
+
+const prop = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.15, 0.1), blackMat);
+prop.position.z = 2.3;
+planeGroup.add(prop);
+
+const gearGroup = new THREE.Group();
+const wheels = [];
+const createW = (x, z) => {
+    const g = new THREE.Group();
+    const w = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.15), blackMat);
+    w.rotation.z = Math.PI/2; w.position.y = -0.4;
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.8), blackMat));
+    g.add(w); g.position.set(x, -0.2, z);
+    gearGroup.add(g); wheels.push(w);
+};
+createW(1, 0.5); createW(-1, 0.5); createW(0, -1.8);
+planeGroup.add(gearGroup);
+scene.add(planeGroup);
+
+/** * CONTROLS **/
+let speed = 0, targetSpeed = 0, yaw = 0, pitch = 0, roll = 0, gearPos = 1;
+let gearOn = true, crashed = false;
+const inputs = { left: false, right: false, up: false, down: false };
+
+const thrustSlider = document.getElementById('thrustSlider');
+const bind = (id, key) => {
+    const el = document.getElementById(id);
+    const start = (e) => { e.preventDefault(); inputs[key] = true; el.classList.add('active'); };
+    const end = () => { inputs[key] = false; el.classList.remove('active'); };
+    el.addEventListener('pointerdown', start);
+    el.addEventListener('pointerup', end);
+    el.addEventListener('pointerleave', end);
+};
+bind('btnLeft', 'left'); bind('btnRight', 'right'); bind('pitchUp', 'up'); bind('pitchDown', 'down');
+
+document.getElementById('gearToggle').onclick = () => {
+    if(crashed) return;
+    gearOn = !gearOn;
+    gearToggle.innerText = gearOn ? "GEAR: DN" : "GEAR: UP";
+    gearToggle.className = gearOn ? "gear-down" : "";
+};
+document.getElementById('restartBtn').onclick = () => location.reload();
+
+/** * ANIMATION LOOP **/
+function animate() {
+    if (crashed) return;
+    requestAnimationFrame(animate);
+
+    targetSpeed = thrustSlider.value / 45; 
+    speed = THREE.MathUtils.lerp(speed, targetSpeed, 0.015);
+    prop.rotation.z += speed * 1.5;
+
+    gearPos = THREE.MathUtils.lerp(gearPos, gearOn ? 1 : 0, 0.1);
+    gearGroup.scale.set(1, gearPos, 1);
+    gearGroup.position.y = (1 - gearPos) * 0.4;
+
+    const altitude = planeGroup.position.y - (gearOn ? 0.9 : 0.4);
+    const airborne = altitude > 0.2;
+
+    if (inputs.up) pitch += 0.025;
+    if (inputs.down) pitch -= 0.025;
+    pitch *= 0.94;
+
+    if (speed > 0.3) {
+        planeGroup.rotation.x = THREE.MathUtils.lerp(planeGroup.rotation.x, -pitch, 0.05);
+        planeGroup.position.y += Math.sin(-planeGroup.rotation.x) * speed;
+    }
+
+    let turnStr = 0.035 * (speed + 0.1);
+    if (inputs.left) { yaw += turnStr; if (airborne) roll = THREE.MathUtils.lerp(roll, 0.7, 0.08); }
+    else if (inputs.right) { yaw -= turnStr; if (airborne) roll = THREE.MathUtils.lerp(roll, -0.7, 0.08); }
+    else { roll = THREE.MathUtils.lerp(roll, 0, 0.1); }
+
+    planeGroup.rotation.set(planeGroup.rotation.x, yaw, roll);
+    planeGroup.position.x += Math.sin(yaw) * speed * Math.cos(planeGroup.rotation.x);
+    planeGroup.position.z += Math.cos(yaw) * speed * Math.cos(planeGroup.rotation.x);
+
+    const minH = gearOn ? 0.9 : 0.4;
+    if (planeGroup.position.y < minH) {
+        if (!gearOn && speed > 0.25) { crashed = true; document.getElementById('gameOver').style.display = 'flex'; return; }
+        planeGroup.position.y = minH;
+        if (planeGroup.rotation.x > 0) planeGroup.rotation.x = 0;
+    }
+
+    const camOffset = new THREE.Vector3(0, 2.5, -11).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    camera.position.lerp(planeGroup.position.clone().add(camOffset), 0.1);
+    camera.lookAt(planeGroup.position.x, planeGroup.position.y + 0.5, planeGroup.position.z);
+
+    document.getElementById('spd').innerText = Math.round(speed * 120);
+    document.getElementById('alt').innerText = Math.max(0, Math.round(altitude * 25));
+    document.getElementById('thr').innerText = thrustSlider.value;
+    
+    wheels.forEach(w => w.rotation.x += speed * 3);
+    renderer.render(scene, camera);
+}
+
+// THE RATIO FIX: 
+window.addEventListener('resize', () => {
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    renderer.setSize(width, height);
+});
+
+animate();
+</script>
+</body>
+</html>
