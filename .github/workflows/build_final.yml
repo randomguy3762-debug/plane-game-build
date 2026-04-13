@@ -32,6 +32,9 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
+      - name: Copy www to public
+        run: cp -r www/* android/app/src/main/assets/public/
+
       - name: Build APK
         working-directory: android
         run: ./gradlew assembleDebug -x test -x lint --no-daemon
